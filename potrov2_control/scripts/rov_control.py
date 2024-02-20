@@ -4,11 +4,16 @@ from std_msgs.msg import String, Int64, Float64MultiArray
 from sensor_msgs.msg import Joy
 from geometry_msgs.msg import WrenchStamped
 from sensor_msgs.msg import Imu
+from sensor_msgs.msg import FluidPressure
 from uuv_gazebo_ros_plugins_msgs.msg import FloatStamped
 from scipy.spatial.transform import Rotation as R
 import math
 import numpy as np
 import time
+
+def pressure_callback(data):
+  global depth_val
+  depth_val = round((data.fluid_pressure-101.5)*0.1023,2)
 
 def imu_callback(data):
 	global quat, roll, pitch, yaw, last_z_vec, last_roll, last_pitch
@@ -150,7 +155,7 @@ def position_hold(surge_val, yaw_val, sway_val,  roll_val, pitch_val, heave_val)
 			move_rov(surge=0, yaw=0, sway=0, roll= 0, pitch=0, heave=0)
 
 def stabilize(surge_val, yaw_val, sway_val, heave_val):
-	global roll, pitch, roll_last_e, roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time
+	global roll, pitch, roll_last_e, roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time, depth_val, depth_last_e, depth_last_time, depth_e,depth_i, depth_setpoint
 	#STABILIZE ROLL
 	roll = math.radians(roll)
 	setpoint = 0
@@ -180,11 +185,26 @@ def stabilize(surge_val, yaw_val, sway_val, heave_val):
 	pitch_cf = kp*pitch_e + kd*pitch_d + ki*pitch_i
 	pitch_last_e = pitch_e
 	#print('f',pitch,pitch_cf,pitch_e,pitch_d,pitch_i)
+	#STABILIZE DEPTH
+	if not abs(heave_val)<0.1:
+		depth_setpoint = depth_val
+		heave_cf=heave_val
+	else:
+		print(depth_setpoint)
+		depth_e =  depth_val - depth_setpoint
+		kp = 1
+		kd = 0#.02
+		ki = 0.01
+		depth_d = (depth_e-depth_last_e)/(time.time()-depth_last_time)
+		depth_last_time = time.time()
+		depth_i = depth_i+depth_e
+		heave_cf = kp*depth_e + kd*depth_d + ki*depth_i
+		depth_last_e = depth_e
 	#APPLY CORRECTIVE FORCES
-	move_rov(pitch= pitch_cf, roll= roll_cf, surge=surge_val, yaw=yaw_val, sway=sway_val, heave=heave_val)
+	move_rov(pitch= pitch_cf, roll= roll_cf, surge=surge_val, yaw=yaw_val, sway=sway_val, heave=heave_cf)
 
 def joy_s(data):
-	global roll, pitch, yaw, arm, old_arm_disarm_val, old_control_mode_val, disarmed, mode, control_mode, acro_surge_val, roll_setpoint, pitch_setpoint, yaw_setpoint
+	global roll, pitch, yaw, arm, old_arm_disarm_val, old_control_mode_val, disarmed, mode, control_mode, acro_surge_val, roll_setpoint, pitch_setpoint, yaw_setpoint, depth_setpoint
 	heave_axis = 1
 	sway_axis= 2
 	yaw_axis = 0
@@ -219,6 +239,8 @@ def joy_s(data):
 			roll_setpoint = math.radians(roll)
 			pitch_setpoint = math.radians(pitch)
 			yaw_setpoint = math.radians(yaw)
+		if not (control_mode=='Stabilize' or control_mode=='Stabilized Acro'):
+			depth_setpoint = depth_val
 		#MANUAL
 		if control_mode=='Manual':
 			#print('current-mode:',control_mode)
@@ -265,17 +287,18 @@ def joy_s(data):
 		roll_setpoint = math.radians(roll)
 		pitch_setpoint = math.radians(pitch)
 		yaw_setpoint = math.radians(yaw)
+		depth_setpoint = depth_val
 		move_rov(surge=0, yaw=0, sway=0, roll= 0, pitch=0, heave=0)
 	old_arm_disarm_val = arm_disarm_val
 	old_control_mode_val = control_mode_val
 if __name__=='__main__':
-		global arm, disarmed, sim_pub, thruster_pub, old_arm_disarm_val, old_control_mode_val, control_mode, mode, acro_surge_val, roll_last_e
-		global roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time, last_z_vec, last_pitch, last_roll, yaw_last_e, yaw_i, yaw_last_time, roll_setpoint, pitch_setpoint, yaw_setpoint
+		global arm, disarmed, sim_pub, thruster_pub, old_arm_disarm_val, old_control_mode_val, control_mode, mode, acro_surge_val, roll_last_e, depth_val, depth_last_e, depth_last_time, depth_e,depth_i
+		global roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time, last_z_vec, last_pitch, last_roll, yaw_last_e, yaw_i, yaw_last_time, roll_setpoint, pitch_setpoint, yaw_setpoint, depth_setpoint
 		disarmed = False
 		arm = -1
 		old_arm_disarm_val = 1
 		old_control_mode_val = 1
-		mode = 0     ##SET DEFAULT MODE USING THIS
+		mode = 4     ##SET DEFAULT MODE USING THIS
 		control_modes = ['Manual','Stabilize','Acro','Position Hold','Stabilized Acro']
 		control_mode = control_modes[mode]
 		acro_surge_val = 0
@@ -288,21 +311,26 @@ if __name__=='__main__':
 		yaw_last_e = 0
 		yaw_i = 0
 		yaw_last_time = time.time()
+		depth_last_e = 0
+		depth_i = 0
+		depth_last_time = time.time()
 		last_z_vec = (0,0,1)
 		last_pitch = 0
 		last_roll = 0
 		roll_setpoint = 0
 		pitch_setpoint = 0
 		yaw_setpoint = 0
+		depth_val = 0
+		depth_setpoint = 0
 
 		rospy.init_node('rov_control', anonymous=True)
-		rospy.Subscriber('/potrov2/imu', Imu, imu_callback)
-		rospy.Subscriber('/joy', Joy ,joy_s)
-		rospy.Subscriber('/potrov2/thrusters/0/input', FloatStamped ,thruster_callback)
 		sim_pub = rospy.Publisher('/potrov2/thruster_manager/input_stamped',WrenchStamped,queue_size=10)
 		thruster_pub = rospy.Publisher('/potrov2/thrusters/0/input_pwm',FloatStamped,queue_size=10)
 		mode_pub = rospy.Publisher('potrov2/control_mode',String, queue_size=10)
 		arm_pub = rospy.Publisher('potrov2/armed', Int64, queue_size=10)
 		control_pub = rospy.Publisher('potrov2/control_vals',Float64MultiArray, queue_size=10)
-		
+		rospy.Subscriber('/potrov2/pressure', FluidPressure, pressure_callback)
+		rospy.Subscriber('/potrov2/imu', Imu, imu_callback)
+		rospy.Subscriber('/potrov2/thrusters/0/input', FloatStamped ,thruster_callback)
+		rospy.Subscriber('/joy', Joy ,joy_s)	
 		rospy.spin()
