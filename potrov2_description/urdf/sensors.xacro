@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!--
+    Some examples of sensors that can be added to the vehicle frame.
+    Set the origin of the sensor frames correctly for your application
+    Look into the sensor macros in the package uuv_sensor_ros_plugins/urdf for
+    more examples or add you own custom sensor units.
+  -->
+
+  <!-- Mount a camera -->
+  <xacro:potrov_camera namespace="" parent_link="${namespace}/base_link" suffix="_front">
+    <origin xyz="0.32 0 0.1" rpy="0 0 0"/>
+  </xacro:potrov_camera>
+  
+  <xacro:potrov_camera namespace="" parent_link="${namespace}/base_link" suffix="_down">
+    <origin xyz="0 0 -0.2" rpy="0 1.57079 0"/>
+  </xacro:potrov_camera>
+  
+  <xacro:default_imu namespace="${namespace}" parent_link="${namespace}/base_link">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:default_imu>
+  
+  <!-- MAG Sensor -->
+  <xacro:default_magnetometer namespace="${namespace}" parent_link="${namespace}/base_link">
+  </xacro:default_magnetometer>
+
+  <!-- Pressure Sensor  -->
+  <xacro:default_pressure namespace="${namespace}" parent_link="${namespace}/base_link">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:default_pressure>
+</robot>

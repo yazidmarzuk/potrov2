@@ -1,0 +1,11 @@
+<launch>
+<arg name="joy_id" default="0"/>
+<include file="$(find potrov2_control)/launch/start_thruster_manager.launch" />
+<group>
+    <node pkg="joy" type="joy_node" name="joystick">
+      <param name="dev" value="/dev/input/js$(arg joy_id)"/>
+      <param name="autorepeat_rate" value="10" />
+    </node>    
+</group>
+  
+</launch>
