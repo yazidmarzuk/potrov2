@@ -1,19 +1,129 @@
 #!/usr/bin/env python3
 import rospy
 from std_msgs.msg import String, Int64, Float64MultiArray
-from sensor_msgs.msg import Joy
 from geometry_msgs.msg import WrenchStamped
-from sensor_msgs.msg import Imu
-from sensor_msgs.msg import FluidPressure
-from uuv_gazebo_ros_plugins_msgs.msg import FloatStamped
+from sensor_msgs.msg import Imu, FluidPressure, Joy, NavSatFix
+from std_msgs.msg import Float64
+from uuv_sensor_ros_plugins_msgs.msg import DVL
 from scipy.spatial.transform import Rotation as R
 import math
-import numpy as np
 import time
+# import folium
+# from geopy.geocoders import Nominatim
+# from folium.plugins import Realtime
+# import cv2
+# from PIL import Image
+# from io import BytesIO
+import numpy as np
+
+def thrust_forces(control_forces, control_torques):
+	# configuration_matrix = np.array([[-0.70710361, -0.70710361, 0.7071069, 0.7071069, 0.0, 0.0, 0.0, 0.0],
+	# 								 [0.70710996, -0.70710996, 0.70710667, -0.70710667, 0.0, 0.0, 0.0, 0.0],
+	# 								 [ 0.0, 0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25],
+	# 								 [0.0, 0.0, 0.0, 0.0, -0.5, 0.5, -0.5, 0.5],
+	# 								 [ 0.0, 0.0, 0.0, 0.0, -0.5, -0.5, 0.5, 0.5],
+	# 								 [ 1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 0.0, 0.0]])
+	# inverse_configuration_matrix = np.linalg.pinv(configuration_matrix)
+	#                                              Surge           Sway        Heave   Roll    Pitch     Yaw    Thruster
+	inverse_configuration_matrix = np.array([[-0.353553390593,  0.353553390593,  0,      0,      0,      0.25],    #1
+										  	 [-0.353553390593, -0.353553390593,  0,      0,      0,     -0.25],    #2
+											 [ 0.353553390593,  0.353553390593,  0,      0,      0,     -0.25],    #3
+											 [ 0.353553390593, -0.353553390593,  0,      0,      0,      0.25],    #4
+											 [ 0,               0,               0.25,  -0.25,  -0.25,   0.0],     #5
+											 [ 0,               0,               0.25,   0.25,  -0.25,   0.0],     #6
+											 [ 0,               0,               0.25,  -0.25,   0.25,   0.0],     #7
+											 [ 0,               0,               0.25,   0.25,   0.25,   0.0],])   #8
+	#print(inverse_configuration_matrix)
+	gen_forces = np.hstack(
+		(control_forces, control_torques)).transpose()
+	thrust = inverse_configuration_matrix.dot(gen_forces)
+	print(thrust)
+	thruster0_pub.publish(thrust[0])
+	thruster1_pub.publish(thrust[1])
+	thruster2_pub.publish(thrust[2])
+	thruster3_pub.publish(thrust[3])
+	thruster4_pub.publish(thrust[4])
+	thruster5_pub.publish(thrust[5])
+	thruster6_pub.publish(thrust[6])
+	thruster7_pub.publish(thrust[7])
+
+def gps_callback(data):
+	global latitude, longitude
+	latitude = data.latitude
+	longitude = data.longitude
+
+def calculate_new_coordinates(lat, lon, distance, bearing):
+    # Earth radius in kilometers
+    earth_radius = 6371.0  
+
+    # Convert distance from meters to kilometers
+    distance /= 1000.0  
+
+    # Convert latitude and longitude from degrees to radians
+    lat1 = math.radians(lat)
+    lon1 = math.radians(lon)
+    bearing = math.radians(bearing)
+
+    # Calculate new latitude
+    lat2 = math.asin(math.sin(lat1) * math.cos(distance / earth_radius) +
+                     math.cos(lat1) * math.sin(distance / earth_radius) * math.cos(bearing))
+
+    # Calculate new longitude
+    lon2 = lon1 + math.atan2(math.sin(bearing) * math.sin(distance / earth_radius) * math.cos(lat1),
+                             math.cos(distance / earth_radius) - math.sin(lat1) * math.sin(lat2))
+
+    # Convert latitude and longitude from radians to degrees
+    lat2 = math.degrees(lat2)
+    lon2 = math.degrees(lon2)
+
+    return lat2, lon2
+
+def dvl_callback(data):
+	global vx, vy, vz, yaw, latitude, longitude, depth_val, last_time, dist_x, dist_y, init_latitude, init_longitude
+	gps_msg = NavSatFix()
+	vx = round(data.velocity.z,3)
+	vy = round(-data.velocity.y,3)
+	vz = round(-data.velocity.x,3)
+	#print('*',vx, vy)
+	# init_latitude = -56.71897669633431       #LAT & LON at x,y = 0
+	# init_longitude = -3.515625000000001
+	if depth_val<0.5:
+		#print('FOUND GPS CONNECTION')
+		dist_x = 0
+		dist_y = 0
+		init_latitude = latitude
+		init_longitude = longitude
+		# dist_y = (latitude-init_latitude)*111320
+		# dist_x = (longitude-init_longitude)*111320*math.cos(math.radians(latitude))
+		# print(dist_x,dist_y)
+		#print('GPS POSITION:\nLatitude:',latitude,'\nLongitude:',longitude)
+	else:
+		#print('GPS CONNECTION LOST! DEAD RECKONING...')
+		current_time = time.time()
+		dx = vx*(current_time-last_time)
+		dy = vy*(current_time-last_time)
+		last_time = current_time
+		dist_x += dx*math.cos(math.radians(yaw))+dy*math.sin(math.radians(yaw))
+		dist_y += dx*math.sin(math.radians(yaw))-dy*math.cos(math.radians(yaw))
+		#print(dist_x,dist_y)
+		latitude1 = (dist_y/111000)+init_latitude
+		longitude1 = (dist_x/(111000*math.cos(math.radians(latitude1))))+init_longitude
+		#latitude1, longitude1 = calculate_new_coordinates(init_latitude, init_longitude, ((dist_x)**2+(dist_y)**2)**(0.5),yaw)
+		gps_msg.header.stamp = rospy.Time.now()
+		gps_msg.latitude = latitude1
+		gps_msg.longitude = longitude1
+		gps_pub.publish(gps_msg)
+		#print('GPS POSITION:\nLatitude:',latitude1,'\nLongitude:',longitude1)
+		# m.add_child(folium.Marker(location=(latitude,longitude), popup='Current Location', icon=folium.Icon(color='red')))
+		# m.add_child(folium.Marker(location=(latitude1,longitude1), popup='Current Location', icon=folium.Icon(color='blue')))
+		# m.save('live_map.html')
+		#print('ERROR:\nLatitude:',latitude1-latitude,'\nLongitude:',longitude1-longitude)
+
 
 def pressure_callback(data):
   global depth_val
   depth_val = round((data.fluid_pressure-101.5)*0.1023,2)
+  #print('depth=', depth_val)
 
 def imu_callback(data):
 	global quat, roll, pitch, yaw, last_z_vec, last_roll, last_pitch
@@ -87,13 +197,10 @@ def move_rov(surge,yaw,sway,roll,pitch,heave):
 	msg.wrench.torque.y = pitch*(50000)
 	msg.wrench.torque.z = yaw*(-6000)
 	control_pub.publish(Float64MultiArray(data=[surge,yaw,sway,roll,pitch,heave]))
+	force = np.array((surge, sway, heave))
+	torque = np.array((roll, pitch, yaw))
+	thrust_forces(force,torque)
 	sim_pub.publish(msg)
-
-
-def thruster_callback(msg):
-	global thruster_pub
-	msg.data = msg.data/400 
-	thruster_pub.publish(msg)
 
 def position_hold(surge_val, yaw_val, sway_val,  roll_val, pitch_val, heave_val):
 	global roll, pitch, yaw, roll_last_e, roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time, yaw_last_e, yaw_i, yaw_last_time, roll_setpoint, pitch_setpoint, yaw_setpoint
@@ -155,7 +262,23 @@ def position_hold(surge_val, yaw_val, sway_val,  roll_val, pitch_val, heave_val)
 			move_rov(surge=0, yaw=0, sway=0, roll= 0, pitch=0, heave=0)
 
 def stabilize(surge_val, yaw_val, sway_val, heave_val):
-	global roll, pitch, roll_last_e, roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time, depth_val, depth_last_e, depth_last_time, depth_e,depth_i, depth_setpoint
+	global roll, pitch, yaw, roll_last_e, roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time, yaw_last_e, yaw_i, yaw_last_time, roll_setpoint, pitch_setpoint, yaw_setpoint
+	if not yaw_val==0:
+		yaw_cf = yaw_val
+		yaw_setpoint = math.radians(yaw)
+	else:
+		yaw = math.radians(yaw)
+		kp=1
+		kd=0.05
+		ki=0.1
+		yaw_e = yaw_setpoint-yaw
+		yaw_d = (yaw_e-yaw_last_e)/(time.time()-yaw_last_time)
+		yaw_last_time = time.time()
+		yaw_i = yaw_i+yaw_e
+		yaw_cf = kp*yaw_e + kd*yaw_d + ki*yaw_i
+		yaw_last_e = yaw_e
+
+	global roll, pitch, roll_last_e, roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time, depth_val, depth_last_e, depth_last_time, depth_e,depth_i, depth_setpoint, vx, vx_last_e, vx_last_time, vx_e, vx_i, vy, vy_last_e, vy_last_time, vy_e, vy_i
 	#STABILIZE ROLL
 	roll = math.radians(roll)
 	setpoint = 0
@@ -186,25 +309,52 @@ def stabilize(surge_val, yaw_val, sway_val, heave_val):
 	pitch_last_e = pitch_e
 	#print('f',pitch,pitch_cf,pitch_e,pitch_d,pitch_i)
 	#STABILIZE DEPTH
-	if not abs(heave_val)<0.1:
+	if not heave_val==0:
 		depth_setpoint = depth_val
 		heave_cf=heave_val
 	else:
-		print(depth_setpoint)
+		#print(depth_setpoint)
 		depth_e =  depth_val - depth_setpoint
-		kp = 1
-		kd = 0#.02
+		kp = 2
+		kd = 0.02
 		ki = 0.01
 		depth_d = (depth_e-depth_last_e)/(time.time()-depth_last_time)
 		depth_last_time = time.time()
 		depth_i = depth_i+depth_e
 		heave_cf = kp*depth_e + kd*depth_d + ki*depth_i
 		depth_last_e = depth_e
+	#STABILIZE AGAINST WATER CURRENT
+	if not surge_val==0:
+		vx_cf = surge_val
+	else:
+		kp=6
+		kd=0.01
+		ki=0.15
+		vx_e = 0-vx
+		vx_d = (vx_e-vx_last_e)/(time.time()-vx_last_time)
+		vx_last_time = time.time()
+		vx_i = vx_i+vx_e
+		vx_cf = kp*vx_e + kd*vx_d + ki*vx_i
+		vx_last_e = vx_e
+	#print('error',vx_e)
+	if not sway_val==0:
+		vy_cf = sway_val
+	else:
+		kp=6
+		kd=0.01
+		ki=0.15
+		vy_e = vy-0
+		vy_d = (vy_e-vy_last_e)/(time.time()-vy_last_time)
+		vy_last_time = time.time()
+		vy_i = vy_i+vy_e
+		vy_cf = kp*vy_e + kd*vy_d + ki*vy_i
+		vy_last_e = vy_e
+	
 	#APPLY CORRECTIVE FORCES
-	move_rov(pitch= pitch_cf, roll= roll_cf, surge=surge_val, yaw=yaw_val, sway=sway_val, heave=heave_cf)
+	move_rov(pitch= pitch_cf, roll= roll_cf, surge=vx_cf, yaw=yaw_cf, sway=vy_cf, heave=heave_cf)
 
 def joy_s(data):
-	global roll, pitch, yaw, arm, old_arm_disarm_val, old_control_mode_val, disarmed, mode, control_mode, acro_surge_val, roll_setpoint, pitch_setpoint, yaw_setpoint, depth_setpoint
+	global roll, pitch, yaw, arm, old_arm_disarm_val, old_control_mode_val, disarmed, mode, control_mode, acro_surge_val, roll_setpoint, pitch_setpoint, yaw_setpoint, depth_setpoint, vx
 	heave_axis = 1
 	sway_axis= 2
 	yaw_axis = 0
@@ -227,7 +377,7 @@ def joy_s(data):
 		mode +=1
 		mode = mode%len(control_modes)
 		control_mode = control_modes[mode]
-		#print('Control switched to',control_mode,'Mode')
+		print('Control switched to',control_mode,'Mode')
 	mode_pub.publish(control_mode)
 	if arm_disarm_val==1 and old_arm_disarm_val==0:
 		arm*=(-1)
@@ -293,12 +443,16 @@ def joy_s(data):
 	old_control_mode_val = control_mode_val
 if __name__=='__main__':
 		global arm, disarmed, sim_pub, thruster_pub, old_arm_disarm_val, old_control_mode_val, control_mode, mode, acro_surge_val, roll_last_e, depth_val, depth_last_e, depth_last_time, depth_e,depth_i
-		global roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time, last_z_vec, last_pitch, last_roll, yaw_last_e, yaw_i, yaw_last_time, roll_setpoint, pitch_setpoint, yaw_setpoint, depth_setpoint
+		global roll, pitch, yaw, roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time, last_z_vec, last_pitch, last_roll, yaw_last_e, yaw_i, yaw_last_time, roll_setpoint, pitch_setpoint, yaw_setpoint, depth_setpoint
+		global vx, vx_last_e, vx_last_time, vx_e, vx_i, vy, vy_last_e, vy_last_time, vy_e, vy_i, last_time, dist_x, dist_y, m, init_longitude, init_latitude, latitude, longitude
 		disarmed = False
-		arm = -1
+		roll = 0
+		pitch = 0
+		yaw = 0
+		arm = -1     #DEFAULT DISARMED
 		old_arm_disarm_val = 1
 		old_control_mode_val = 1
-		mode = 4     ##SET DEFAULT MODE USING THIS
+		mode = 0     ##SET DEFAULT MODE USING THIS
 		control_modes = ['Manual','Stabilize','Acro','Position Hold','Stabilized Acro']
 		control_mode = control_modes[mode]
 		acro_surge_val = 0
@@ -322,15 +476,40 @@ if __name__=='__main__':
 		yaw_setpoint = 0
 		depth_val = 0
 		depth_setpoint = 0
-
+		vx = 0
+		vx_last_e = 0
+		vx_i = 0
+		vx_last_time = time.time()
+		vy = 0
+		vy_last_e = 0
+		vy_i = 0
+		vy_last_time = time.time()
+		last_time = time.time()
+		dist_x = 0
+		dist_y = 0
+		init_latitude = 0
+		init_longitude = 0
+		latitude = 0
+		longitude = 0
+		#m = folium.Map(location=[0, 0], zoom_start=10)
+		
 		rospy.init_node('rov_control', anonymous=True)
 		sim_pub = rospy.Publisher('/potrov2/thruster_manager/input_stamped',WrenchStamped,queue_size=10)
-		thruster_pub = rospy.Publisher('/potrov2/thrusters/0/input_pwm',FloatStamped,queue_size=10)
+		thruster0_pub = rospy.Publisher('/potrov2/thrusters/0/input_pwm',Float64,queue_size=10)
+		thruster1_pub = rospy.Publisher('/potrov2/thrusters/1/input_pwm',Float64,queue_size=10)
+		thruster2_pub = rospy.Publisher('/potrov2/thrusters/2/input_pwm',Float64,queue_size=10)
+		thruster3_pub = rospy.Publisher('/potrov2/thrusters/3/input_pwm',Float64,queue_size=10)
+		thruster4_pub = rospy.Publisher('/potrov2/thrusters/4/input_pwm',Float64,queue_size=10)
+		thruster5_pub = rospy.Publisher('/potrov2/thrusters/5/input_pwm',Float64,queue_size=10)
+		thruster6_pub = rospy.Publisher('/potrov2/thrusters/6/input_pwm',Float64,queue_size=10)
+		thruster7_pub = rospy.Publisher('/potrov2/thrusters/7/input_pwm',Float64,queue_size=10)
 		mode_pub = rospy.Publisher('potrov2/control_mode',String, queue_size=10)
 		arm_pub = rospy.Publisher('potrov2/armed', Int64, queue_size=10)
 		control_pub = rospy.Publisher('potrov2/control_vals',Float64MultiArray, queue_size=10)
+		gps_pub = rospy.Publisher('potrov2/dead_reckon',NavSatFix, queue_size=1)
+		rospy.Subscriber('/potrov2/gps', NavSatFix, gps_callback)
 		rospy.Subscriber('/potrov2/pressure', FluidPressure, pressure_callback)
 		rospy.Subscriber('/potrov2/imu', Imu, imu_callback)
-		rospy.Subscriber('/potrov2/thrusters/0/input', FloatStamped ,thruster_callback)
-		rospy.Subscriber('/joy', Joy ,joy_s)	
+		rospy.Subscriber('/potrov2/dvl', DVL, dvl_callback)
+		rospy.Subscriber('/joy', Joy ,joy_s)
 		rospy.spin()

@@ -26,6 +26,11 @@ global frame
 frame = None
 event = Event()
 
+def gpsimg_callback(data):
+   global gpsframe
+   br = CvBridge()
+   gpsframe = br.imgmsg_to_cv2(data,desired_encoding = "bgr8")
+
 def mode_callback(msg):
    global control_mode
    control_mode = msg.data
@@ -67,6 +72,16 @@ def downcam(frame):
   x_off = 170
   y_off = 1400
   frame[x_off:x_off+downframe.shape[0], y_off:y_off+downframe.shape[1]] = downframe
+  return frame
+
+def gpsimg(frame):
+  global gpsframe
+  w = 400
+  h = 400
+  gpsframe = cv2.resize(gpsframe,(w,h))
+  x_off = 320
+  y_off = 0
+  frame[x_off:x_off+gpsframe.shape[0], y_off:y_off+gpsframe.shape[1]] = gpsframe
   return frame
 
 def imu_callback(data):
@@ -122,7 +137,7 @@ def pressure_callback(data):
 
 def compass_scale(frame):
   global yaw
-  compass_val = yaw + 180
+  compass_val = (yaw + 180 + 90)%360
   w = 1920
   roi_left = frame[0:120,0:int(w*0.259)].copy()
   roi_right = frame[0:120,int(w*(1-0.259)):w].copy()
@@ -452,6 +467,9 @@ def callback(data):
   #ADD DOWN FACING CAMERA FRAME
   frame = downcam(frame)
 
+  #ADD GPS FRAME
+  frame = gpsimg(frame)
+
   frame = cv2.imencode(".jpg",frame)[1].tobytes()
   event.set()
   #socketio.emit('video_frame', {'image': cv2.imencode('.jpg', frame)[1].tobytes()})
@@ -615,6 +633,7 @@ plotter.show(auto_close=False)
 #     mesh.rotate(R.from_euler('XYZ',angles=(-90,0,180),degrees=True).as_matrix(),center=(0,0,0))
 #     vis.update_geometry(mesh)
 # Node is subscribing to topics
+rospy.Subscriber('/potrov2/gps_image', Image, gpsimg_callback)
 rospy.Subscriber('/potrov2/control_mode', String ,mode_callback)
 rospy.Subscriber('/potrov2/armed', Int64 ,arm_callback)
 rospy.Subscriber('/potrov2/control_vals',Float64MultiArray, control_val_callback)
