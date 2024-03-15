@@ -8,31 +8,18 @@ from uuv_sensor_ros_plugins_msgs.msg import DVL
 from scipy.spatial.transform import Rotation as R
 import math
 import time
-# import folium
-# from geopy.geocoders import Nominatim
-# from folium.plugins import Realtime
-# import cv2
-# from PIL import Image
-# from io import BytesIO
 import numpy as np
 
 def thrust_forces(control_forces, control_torques):
-	# configuration_matrix = np.array([[-0.70710361, -0.70710361, 0.7071069, 0.7071069, 0.0, 0.0, 0.0, 0.0],
-	# 								 [0.70710996, -0.70710996, 0.70710667, -0.70710667, 0.0, 0.0, 0.0, 0.0],
-	# 								 [ 0.0, 0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25],
-	# 								 [0.0, 0.0, 0.0, 0.0, -0.5, 0.5, -0.5, 0.5],
-	# 								 [ 0.0, 0.0, 0.0, 0.0, -0.5, -0.5, 0.5, 0.5],
-	# 								 [ 1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 0.0, 0.0]])
-	# inverse_configuration_matrix = np.linalg.pinv(configuration_matrix)
-	#                                              Surge           Sway        Heave   Roll    Pitch     Yaw    Thruster
-	inverse_configuration_matrix = np.array([[-0.353553390593,  0.353553390593,  0,      0,      0,      0.25],    #1
-										  	 [-0.353553390593, -0.353553390593,  0,      0,      0,     -0.25],    #2
-											 [ 0.353553390593,  0.353553390593,  0,      0,      0,     -0.25],    #3
-											 [ 0.353553390593, -0.353553390593,  0,      0,      0,      0.25],    #4
-											 [ 0,               0,               0.25,  -0.25,  -0.25,   0.0],     #5
-											 [ 0,               0,               0.25,   0.25,  -0.25,   0.0],     #6
-											 [ 0,               0,               0.25,  -0.25,   0.25,   0.0],     #7
-											 [ 0,               0,               0.25,   0.25,   0.25,   0.0],])   #8
+	#                                          Surge    Sway   Heave   Roll    Pitch   Yaw    Thruster
+	inverse_configuration_matrix = np.array([[-0.375,  0.375,  0,      0,      0,      0.25],    #1
+										  	 [-0.375, -0.375,  0,      0,      0,     -0.25],    #2
+											 [ 0.375,  0.375,  0,      0,      0,     -0.25],    #3
+											 [ 0.375, -0.375,  0,      0,      0,      0.25],    #4
+											 [ 0,      0,      0.33,  -0.33,  -0.33,   0.0],     #5
+											 [ 0,      0,      0.33,   0.33,  -0.33,   0.0],     #6
+											 [ 0,      0,      0.33,  -0.33,   0.33,   0.0],     #7
+											 [ 0,      0,      0.33,   0.33,   0.33,   0.0],])   #8
 	#print(inverse_configuration_matrix)
 	gen_forces = np.hstack(
 		(control_forces, control_torques)).transpose()
@@ -51,32 +38,6 @@ def gps_callback(data):
 	global latitude, longitude
 	latitude = data.latitude
 	longitude = data.longitude
-
-def calculate_new_coordinates(lat, lon, distance, bearing):
-    # Earth radius in kilometers
-    earth_radius = 6371.0  
-
-    # Convert distance from meters to kilometers
-    distance /= 1000.0  
-
-    # Convert latitude and longitude from degrees to radians
-    lat1 = math.radians(lat)
-    lon1 = math.radians(lon)
-    bearing = math.radians(bearing)
-
-    # Calculate new latitude
-    lat2 = math.asin(math.sin(lat1) * math.cos(distance / earth_radius) +
-                     math.cos(lat1) * math.sin(distance / earth_radius) * math.cos(bearing))
-
-    # Calculate new longitude
-    lon2 = lon1 + math.atan2(math.sin(bearing) * math.sin(distance / earth_radius) * math.cos(lat1),
-                             math.cos(distance / earth_radius) - math.sin(lat1) * math.sin(lat2))
-
-    # Convert latitude and longitude from radians to degrees
-    lat2 = math.degrees(lat2)
-    lon2 = math.degrees(lon2)
-
-    return lat2, lon2
 
 def dvl_callback(data):
 	global vx, vy, vz, yaw, latitude, longitude, depth_val, last_time, dist_x, dist_y, init_latitude, init_longitude
@@ -129,44 +90,7 @@ def imu_callback(data):
 	global quat, roll, pitch, yaw, last_z_vec, last_roll, last_pitch
 	orientation_quat = data.orientation
 	quat = (orientation_quat.x, orientation_quat.y, orientation_quat.z, orientation_quat.w)
-	roll = 0
-	pitch = 0
-	# print(["%.2f" % elem for elem in R.from_quat(quat).as_euler('xyz',degrees=True)],'1')
-	# print(["%.2f" % elem for elem in R.from_quat(quat).as_euler('xzy',degrees=True)],'2')
-	# print(["%.2f" % elem for elem in R.from_quat(quat).as_euler('yxz',degrees=True)],'3')
-	# print(["%.2f" % elem for elem in R.from_quat(quat).as_euler('yzx',degrees=True)],'4')
-	# print(["%.2f" % elem for elem in R.from_quat(quat).as_euler('zxy',degrees=True)],'5')
-	# print(["%.2f" % elem for elem in R.from_quat(quat).as_euler('zyx',degrees=True)],'6')
 	roll,pitch,yaw = R.from_quat(quat).as_euler('xyz',degrees=True)
-	# q0=quat[0]
-	# q1=quat[1]
-	# q2=quat[2]
-	# q3=quat[3]
-
-	# roll=math.degrees(-math.atan2(2*(q0*q1+q2*q3),1-2*(q1*q1+q2*q2)))
-	# pitch=math.degrees(math.asin(2*(q0*q2-q3*q1)))
-	# yaw=-math.atan2(2*(q0*q3+q1*q2),1-2*(q2*q2+q3*q3))-np.pi/2
-	#r = R.from_quat(quat).as_matrix()
-	# rz_vec = (-r[1][1],r[1][2])
-	# roll = math.degrees(math.acos(np.dot(rz_vec,(1,0))/(math.sqrt(sum(pow(element, 2) for element in rz_vec)))))
-	# if rz_vec[0]>0:
-	# 	roll=-1*roll
-	# ry_vec = (-r[0][0],r[0][2])
-	# pitch = math.degrees(math.acos(np.dot(ry_vec,(1,0))/(math.sqrt(sum(pow(element, 2) for element in ry_vec)))))
-	# if ry_vec[0]>0:
-	# 	pitch=-1*pitch
-	# z_vec = (r[2][0],r[2][1],r[2][2])
-	# ch_z = math.degrees(math.acos(np.dot(z_vec,last_z_vec)/(math.sqrt(sum(pow(element, 2) for element in z_vec)))))
-	# last_z_vec = z_vec
-	# if ch_z<0.1:
-	# 	roll = last_roll
-	# 	pitch = last_pitch
-	# last_roll = roll
-	# last_pitch = pitch
-	# print('tr',ch_z)
-	#(_, _, roll) = R.from_quat(quat).as_euler('zyx',degrees=True)
-	#(pitch, _, _) = R.from_quat(quat).as_euler('yzx',degrees=True)
-	#print(int(pitch),int(roll))
 
 def move_rov(surge,yaw,sway,roll,pitch,heave):
 	surge = round(surge,3)
@@ -190,17 +114,20 @@ def move_rov(surge,yaw,sway,roll,pitch,heave):
 	global sim_pub
 	msg = WrenchStamped()
 	msg.header.stamp = rospy.Time.now()  
+	#for simulation
 	msg.wrench.force.x = surge*(5000)
 	msg.wrench.force.y = sway*(5000)
 	msg.wrench.force.z = heave*(-3000)
 	msg.wrench.torque.x = roll*(-20000)
 	msg.wrench.torque.y = pitch*(50000)
 	msg.wrench.torque.z = yaw*(-6000)
-	control_pub.publish(Float64MultiArray(data=[surge,yaw,sway,roll,pitch,heave]))
+	sim_pub.publish(msg)
+	#for actual robot
 	force = np.array((surge, sway, heave))
 	torque = np.array((roll, pitch, yaw))
 	thrust_forces(force,torque)
-	sim_pub.publish(msg)
+	#for osd
+	control_pub.publish(Float64MultiArray(data=[surge,yaw,sway,roll,pitch,heave]))
 
 def position_hold(surge_val, yaw_val, sway_val,  roll_val, pitch_val, heave_val):
 	global roll, pitch, yaw, roll_last_e, roll_i, pitch_last_e, pitch_i, roll_last_time, pitch_last_time, yaw_last_e, yaw_i, yaw_last_time, roll_setpoint, pitch_setpoint, yaw_setpoint
@@ -491,7 +418,6 @@ if __name__=='__main__':
 		init_longitude = 0
 		latitude = 0
 		longitude = 0
-		#m = folium.Map(location=[0, 0], zoom_start=10)
 		
 		rospy.init_node('rov_control', anonymous=True)
 		sim_pub = rospy.Publisher('/potrov2/thruster_manager/input_stamped',WrenchStamped,queue_size=10)
